@@ -1,0 +1,10 @@
+yfinance
+pandas
+numpy
+scipy
+matplotlib
+seaborn
+fredapi
+requests
+google-genai
+IPython
