@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# S.A.F.E. Outputs
+
+# Ignore generated databases 
+SAFE_Master_Database.csv
+SAFE_Monte_Carlo_DCFs.zip
+*_DCF_Chart.png
+*_Event_Study.png
+
+# Ignore environment variables / API keys 
+.env
