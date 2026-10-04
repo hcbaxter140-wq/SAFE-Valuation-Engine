@@ -93,10 +93,10 @@ SECTOR_GROWTH_ENVELOPE = {
     'Unknown':                {'max_up': 0.15, 'max_down': 0.10, 'shock_prob': 0.04, 'shock_severity': 0.30}
 }
 
-# \ \ \ \ \ \ \ \
+# ===============
 # MACRO DATA |0|
 # (High-Yield Credit Spread Z-Score), (Core PCE YoY),(TCU - Total Capacity Utilization), (T10Y2Y Yield Curve), (High-Yield Credit Spread Z-Score)
-# \ \ \ \ \ \ \ \ 
+#================
 
 def determine_macro_regime(FRED_API_KEY):
     if not FRED_API_KEY or FRED_API_KEY == 'YOUR_FRED_API_KEY_HERE':
@@ -225,10 +225,10 @@ def fetch_semantic_sentiment(ticker, finnhub_api_key, llm_api_key):
         return 0.0
 
 
-# / / / / / / / / / / / / / 
+# =========================
 # MAIN GRADING SCALES | 1 |
 # (PEG Ratio), (Margin & Turnover dynamics (DuPoint Analysis), (EV/EBITDA & ROIC), (accrual Quality)
-# / / / / / / / / / / / / / 
+#===========================
 
 
 def grade_margin_adaptive(value, sector, metric_type='gross'):
@@ -333,9 +333,9 @@ def get_final_rating(score):
     if score >= 4.5: return "Hold weak / Watch"
     return "Avoid"
 
-# / / / / / / / / / / / / / / / / / / / / / / / / 
+# ===============================================
 # MONTE CARLO DCF (Triangular Distribution) | 2 |
-# / / / / / / / / / / / / / / / / / / / / / / / / 
+# ===============================================
 
 def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitda, current_revenue, 
                        shares_out, net_debt, base_growth_rate, live_wacc, beta=1.0, 
@@ -349,31 +349,25 @@ def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitd
         if shares_out < 10000 and pd.notna(current_revenue) and current_revenue > 1000000:
             shares_out = shares_out * 1000000
 
-        # Base growth rate normalized
         base_g = (base_growth_rate / 100) if pd.notna(base_growth_rate) else 0.05
         
-        # Pull sector envelope
         env = SECTOR_GROWTH_ENVELOPE.get(sector, SECTOR_GROWTH_ENVELOPE['Unknown'])
         effective_beta = max(0.6, float(beta)) if (pd.notna(beta) and beta > 0) else 1.0
         
-        # 1. Size dampening (Mega-caps cannot outgrow the macroeconomy indefinitely)
         size_dampener = 0.75 if (pd.notna(current_revenue) and current_revenue > 1e11) else 1.0
 
-        # 2. Dynamic Triangle Boundaries
         downside_penalty = 0.04 if (pd.notna(sortino_ratio) and sortino_ratio < 0.8) else 0.0
         
         tri_mode = np.clip(base_g, -0.05, 0.40)
         tri_right = min(0.60, tri_mode + (env['max_up'] * effective_beta * size_dampener))
         tri_left = max(-0.35, tri_mode - (env['max_down'] * effective_beta) - downside_penalty)
         
-        # Ensure strict triangular ordering: left <= mode <= right
         tri_left = min(tri_left, tri_mode - 0.01)
         tri_right = max(tri_right, tri_mode + 0.01)
 
         iterations = 1000
         rand_g = np.random.triangular(left=tri_left, mode=tri_mode, right=tri_right, size=iterations)
 
-        # Terminal growth rate logic
         if crash_mode:
             tgr = 0.010
             effective_wacc = max(live_wacc, 0.12)
@@ -387,7 +381,6 @@ def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitd
         rand_wacc = np.clip(np.random.normal(effective_wacc, 0.012, iterations), 0.065, 0.18)
         rand_wacc = np.maximum(rand_wacc, tgr + 0.01)
 
-        # Multiples sampling
         base_ebitda_mult = sector_exit_multiples.get(sector, 12.0)
         rand_ebitda_mult = np.random.normal(base_ebitda_mult, 1.5, iterations)
         base_sales_mult = sector_sales_multiples.get(sector, 2.0)
@@ -398,7 +391,6 @@ def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitd
 
         forecast_years = 10 if sector in ['Technology', 'Communication Services'] or (roic and roic > 20) else 5
 
-        # 3. Simulation Loop with Asymmetric Black Swan Draw
         shock_p = env['shock_prob'] * (1.5 if crash_mode else 1.0)
         shock_sev = env['shock_severity']
 
@@ -406,10 +398,8 @@ def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitd
             g_start = rand_g[i]
             wacc = rand_wacc[i]
             
-            # Linear growth fade toward TGR
             g_fade = [g_start - (g_start - tgr) * (yr / forecast_years) for yr in range(1, forecast_years + 1)]
             
-            # Black Swan shock roll
             is_shocked = np.random.rand() < shock_p
             shock_factor = (1.0 - shock_sev) if is_shocked else 1.0
 
@@ -428,7 +418,6 @@ def generate_dcf_model(ticker, sector, current_price, current_fcf, current_ebitd
                     ebitda_proj *= (1 + g_fade[yr])
                     pv_fcf_sum += fcf_proj / ((1 + wacc)**(yr + 1))
                 
-                # Terminal Gordon Growth & Multiple
                 tv_gordon = (fcf_proj * (1 + tgr)) / (wacc - tgr)
                 pv_tv_gordon = tv_gordon / ((1 + wacc)**forecast_years)
                 
@@ -474,13 +463,10 @@ def run_stress_test(ticker, current_price, current_fcf, shares_out, net_debt, ba
     except:
         return {"Fed_Spike": 0, "Growth_Shock": 0, "Crisis": 0}
 
-# / / / / / / / / / / 
+# ==================
 # RISK SECTION | 3 |
 # (Beta), (Sharpe vs. Sortino Ratio), (Bootstrap Alpha Test), (Max Drawdown / MDD)
-# / / / / / / / / / / 
-
-
-
+# ==================
 GLOBAL_RSP_3Y = None
 
 def get_cached_rsp():
@@ -548,11 +534,11 @@ def calculate_mdd(hist_5y):
         return round(drawdowns.min() * 100, 2)
     except:
         return np.nan
-# / / / / / / / / / / / / / / / / / /
+        
+# ==================================
 # BETA AND VARIOUS MATHEMATICS | 4 |
-# MATH, LOGIC & DEFENSE STRATEGY:
 # (CAPM & Blume's Beta), (WACC & Tax), (ROIC & Economic Value Added), (Blended Kelly Criterion)
-# / / / / / / / / / / / / / / / / / /
+# ==================================
 
 
 def extract_waterfall(statement_df, date_row, search_terms, default_val=0):
@@ -910,9 +896,9 @@ def run_master_pipeline(ticker_symbol, risk_free_rate, macro_regime="Neutral", c
         return {"Ticker": ticker_symbol, "Error": str(e)}
 
 
-# / / / / / / / / / / / / / / / / / / / / / / / / / / 
+# =====================================================
 # RISK BOUNDS & HEATMAP (e.g. 8% cap on stocks) | 5 |
-# / / / / / / / / / / / / / / / / / / / / / / / / / / 
+# =====================================================
 
 
 def run_nexus_sensitivity(ticker_symbol, database):
@@ -975,10 +961,9 @@ def apply_institutional_risk_bounds(df, max_asset_cap=0.08, max_sector_cap=0.25)
     return portfolio_df.drop(columns=['raw_alloc', 'constrained_allocation'])
 
 
-# / / / / / / / / / / 
+# =============================
 # "EVENT STUDY" & STOCKS | 6 |
-# / / / / / / / / / / 
-
+# =============================
 
 # =-=-= Input =-=-=
 
@@ -1150,9 +1135,9 @@ except Exception as e:
 print("="*70 + "\n")
 
 
-# / / / / / / / / / / / / 
+# ========================
 # FINAL EVENT STUDY | 7 |
-# / / / / / / / / / / / / 
+# ========================
 
 
 def run_sentiment_event_study(ticker, event_date, days_before=10, days_after=30):
